@@ -2,6 +2,6 @@
 
 int main() {
 
-  willThrow();
+  ThrowAndCatch();
   return 0;
 }

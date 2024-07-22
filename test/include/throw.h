@@ -4,7 +4,7 @@ struct Exception {};
 extern "C" {
 #endif
 
-void willThrow();
+void ThrowAndCatch();
 
 #ifdef  __cplusplus
 }
