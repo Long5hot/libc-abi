@@ -1,26 +1,32 @@
 all: app
 
 ThrowAndCatch.o: ThrowAndCatch.cpp ../include/throw.h
-		clang++ -c -o ThrowAndCatch.o -I../include/ -O0 -g3 ThrowAndCatch.cpp
+		clang++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o ThrowAndCatch.o -I../include/ -O0 ThrowAndCatch.cpp
 
 cppabi.o: ../../abi/libc++abi.cpp
-		clang++ -c -o cppabi.o -O0 -g3 ../../abi/libc++abi.cpp
+		clang++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o cppabi.o -O0 ../../abi/libc++abi.cpp
 
 main.o: main.c
-		clang -c -o main.o -I../include/ -O0 -g3 main.c
+		clang -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o main.o -I../include/ -O0 main.c
 
 app: main.o cppabi.o ThrowAndCatch.o
-		clang main.o cppabi.o ThrowAndCatch.o -O0 -g3 -o app
+		clang main.o cppabi.o ThrowAndCatch.o -O0 -o app
 
 throw.gas: ThrowAndCatch.cpp
-		g++ -c ThrowAndCatch.cpp -g -Wa,-adhls > throw.gas
+		g++ -c ThrowAndCatch.cpp -masm=intel -fverbose-asm -I../include/ -Wa,-adhls > throw.gas
 
 throw.s: ThrowAndCatch.cpp
-		g++ -S ThrowAndCatch.cpp
+		g++ -S ThrowAndCatch.cpp -masm=intel -fverbose-asm -I../include/
 
 .PHONY: clean run
 clean:
 	rm -f main.o ThrowAndCatch.o cppabi.o app
 
 run: app
-		./app
+	./app
+
+debug:
+	clang++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o ThrowAndCatch.o -I../include/ -O0 ThrowAndCatch.cpp -g
+	clang++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o cppabi.o -O0 ../../abi/libc++abi.cpp -g
+	clang -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o main.o -I../include/ -O0 main.c -g
+	clang main.o cppabi.o ThrowAndCatch.o -O0 -o app -g

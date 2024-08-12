@@ -15,10 +15,10 @@ void try_but_dont_catch() {
   try {
     raise();
   } catch (Fake_Exception &) {
-    printf("Running try_but_dont_catch::catch(Fake_Exception)\n");
+    printf("Caught a Fake_Exception!\n");
   }
 
-  printf("try_but_dont_catch handled an Exception and resumed execution");
+  printf("try_but_dont_catch handled an Exception and resumed execution\n");
 }
 
 // And also what happens when it does
@@ -26,12 +26,10 @@ void catchit() {
   try {
     try_but_dont_catch();
   } catch (Exception &) {
-    printf("Running try_but_dont_catch::catch(Exception)\n");
-  } catch (Fake_Exception &) {
-    printf("Running try_but_dont_catch::catch(Fake_Exception)\n");
+    printf("caught an Exception! (Exception)\n");
   }
 
-  printf("catchit handled an exception and resumed execution");
+  printf("catchit handled an exception!\n");
 }
 
 extern "C" {
