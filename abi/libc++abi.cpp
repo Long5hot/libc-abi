@@ -1,12 +1,10 @@
-#include <cstdint>
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <typeinfo>
 #include <unistd.h>
 
 namespace __cxxabiv1 {
-
 struct __class_type_info {
   virtual void foo() {}
 } ti;
@@ -18,16 +16,14 @@ char exception_buff[EXCEPTION_BUFF_SIZE];
 extern "C" {
 
 void *__cxa_allocate_exception(size_t thrown_size) {
-  printf("alloc ex %lu\n", thrown_size);
-
   if (thrown_size > EXCEPTION_BUFF_SIZE)
-    printf("Exception too big,\n");
-
+    printf("Exception too big");
   return &exception_buff;
 }
 
 void __cxa_free_exception(void *thrown_exception);
 
+#include <typeinfo>
 #include <unwind.h>
 
 typedef void (*unexpected_handler)(void);
@@ -52,12 +48,9 @@ struct __cxa_exception {
 
 void __cxa_throw(void *thrown_exception, std::type_info *tinfo,
                  void (*dest)(void *)) {
-  // __cxa_throw never returns.
-  printf("__cxa_throw called\n");
-
   __cxa_exception *header = ((__cxa_exception *)thrown_exception - 1);
 
-  // We need to save the type info in the exception header Unwind will
+  // We need to save the type info in the exception header _Unwind_ will
   // receive, otherwise we won't be able to know it when unwinding
   header->exceptionType = tinfo;
 
@@ -68,18 +61,34 @@ void __cxa_throw(void *thrown_exception, std::type_info *tinfo,
   exit(0);
 }
 
-void __cxa_begin_catch() { printf("begin FTW\n"); }
+void __cxa_begin_catch() { printf("begin Catch\n"); }
 
-void __cxa_end_catch() { printf("end FTW\n"); }
+void __cxa_end_catch() { printf("end Catch\n"); }
 
 /**********************************************/
+
+int readSLEB128(const uint8_t *data) {
+  uintptr_t result = 0;
+  uintptr_t shift = 0;
+  unsigned char byte;
+  const uint8_t *p = data;
+  do {
+    byte = *p++;
+    result |= static_cast<uintptr_t>(byte & 0x7F) << shift;
+    shift += 7;
+  } while (byte & 0x80);
+
+  if ((byte & 0x40) && (shift < (sizeof(result) << 3)))
+    result |= static_cast<uintptr_t>(~0) << shift;
+
+  return static_cast<int>(result);
+}
 
 /**
  * The LSDA is a read only place in memory; we'll create a typedef for
  * this to avoid a const mess later on; LSDA_ptr refers to readonly and
  * &LSDA_ptr will be a non-const pointer to a const place in memory
  */
-
 typedef const uint8_t *LSDA_ptr;
 
 struct LSDA_Header {
@@ -106,31 +115,31 @@ struct LSDA_Header {
   uint8_t type_table_offset;
 };
 
-struct LSDA_CS_Header {
+struct Call_Site_Header {
   // Same as other LSDA constructors
-  LSDA_CS_Header(LSDA_ptr *lsda) {
+  Call_Site_Header(LSDA_ptr *lsda) {
     LSDA_ptr read_ptr = *lsda;
     encoding = read_ptr[0];
     length = read_ptr[1];
-    *lsda = read_ptr + sizeof(LSDA_CS_Header);
+    *lsda = read_ptr + sizeof(Call_Site_Header);
   }
 
   uint8_t encoding;
   uint8_t length;
 };
 
-struct LSDA_CS {
+struct Call_Site {
   // Same as other LSDA constructors
-  LSDA_CS(LSDA_ptr *lsda) {
+  Call_Site(LSDA_ptr *lsda) {
     LSDA_ptr read_ptr = *lsda;
     start = read_ptr[0];
     len = read_ptr[1];
     lp = read_ptr[2];
     action = read_ptr[3];
-    *lsda = read_ptr + sizeof(LSDA_CS);
+    *lsda = read_ptr + sizeof(Call_Site);
   }
 
-  LSDA_CS() {}
+  Call_Site() {}
 
   // Note start, len and lp would be void*'s, but they are actually relative
   // addresses: start and lp are relative to the start of the function, len
@@ -145,14 +154,37 @@ struct LSDA_CS {
   // Offset into action table + 1 (0 means no action)
   // Used to run destructors
   uint8_t action;
+
+  bool has_landing_pad() const { return lp; }
+
+  /**
+   * Returns true if the instruction pointer for this call frame
+   * (throw_ip) is in the range of the landing pad for this call
+   * site; if true that means the exception was thrown from within
+   * this try/catch block
+   */
+  bool valid_for_throw_ip(uintptr_t func_start, uintptr_t throw_ip) const {
+    // Calculate the range of the instruction pointer valid for this
+    // landing pad; if this LP can handle the current exception then
+    // the IP for this stack frame must be in this range
+    uintptr_t try_start = func_start + this->start;
+    uintptr_t try_end = func_start + this->start + this->len;
+
+    // Check if this is the correct LP for the current try block
+    if (throw_ip < try_start)
+      return false;
+    if (throw_ip > try_end)
+      return false;
+
+    // The current exception was thrown from this landing pad
+    return true;
+  }
 };
 
 /**
  * A class to read the language specific data for a function
  */
-
 struct LSDA {
-
   LSDA_Header header;
 
   // The types_table_start holds all the types this stack frame
@@ -162,7 +194,7 @@ struct LSDA {
 
   // With the call site header we can calculate the lenght of the
   // call site table
-  LSDA_CS_Header cs_header;
+  Call_Site_Header cs_header;
 
   // A pointer to the start of the call site table
   const LSDA_ptr cs_table_start;
@@ -173,10 +205,6 @@ struct LSDA {
   // A pointer to the start of the action table, where an action is
   // defined for each call site
   const LSDA_ptr action_tbl_start;
-
-  // For iterating over LSDA_CSs
-  LSDA_CS next_cs_entry;
-  LSDA_ptr next_cs_entry_ptr;
 
   LSDA(LSDA_ptr raw_lsda)
       : // Read LSDA header for the LSDA, advance the ptr
@@ -199,7 +227,10 @@ struct LSDA {
         // Get the start of action tables
         action_tbl_start(cs_table_end) {}
 
-  const LSDA_CS *next_call_site_entry(bool start = false) {
+  Call_Site next_cs_entry;
+  LSDA_ptr next_cs_entry_ptr;
+
+  const Call_Site *next_call_site_entry(bool start = false) {
     if (start)
       next_cs_entry_ptr = cs_table_start;
 
@@ -207,122 +238,202 @@ struct LSDA {
     if (next_cs_entry_ptr >= cs_table_end)
       return NULL;
 
-    // Copy the call site table and advance the cursor by sizeof(LSDA_CS).
+    // Copy the call site table and advance the cursor by sizeof(Call_Site).
     // We need to copy the struct here because there might be alignment
     // issues otherwise
-    next_cs_entry = LSDA_CS(&next_cs_entry_ptr);
+    next_cs_entry = Call_Site(&next_cs_entry_ptr);
 
     return &next_cs_entry;
+  }
+
+  /**
+   * Returns a pointer to the action entry for a call site entry or
+   * null if the CS has no action
+   */
+  const LSDA_ptr get_action_for_call_site(const Call_Site *cs) const {
+    if (cs->action == 0)
+      return NULL;
+
+    const size_t action_offset = cs->action - 1;
+    return this->action_tbl_start + action_offset;
+  }
+
+  /**
+   * An entry in the action table
+   */
+  struct Action {
+    // An index into the types table
+    int type_index;
+
+    // Offset for the next action, relative from this byte (this means
+    // that the next action will begin exactly at the address of
+    // &next_offset - next_offset itself
+    int next_offset;
+
+    // A pointer to the raw action, which we need to get the next
+    // action:
+    //   next_action_offset = raw_action_ptr[1]
+    //   next_action_ptr = &raw_action_ptr[1] + next_action_offset
+    LSDA_ptr raw_action_ptr;
+
+  } current_action;
+
+  /**
+   * Gets the first action for a specific call site
+   */
+  const Action *get_first_action_for_cs(const Call_Site *cs) {
+    // The call site may have no associated action (in that case
+    // it should be a cleanup)
+    if (cs->action == 0)
+      return NULL;
+
+    // The action in the CS is 1 based: 0 means no action and
+    // 1 is the element 0 on the action table
+    const size_t action_offset = cs->action - 1;
+    LSDA_ptr action_raw = this->action_tbl_start + action_offset;
+
+    current_action.type_index = action_raw[0];
+    current_action.next_offset = readSLEB128(&action_raw[1]);
+    current_action.raw_action_ptr = &action_raw[0];
+
+    return &current_action;
+  }
+
+  /**
+   * Gets the next action, if any, for a CS (after calling
+   * get_first_action_for_cs)
+   */
+  const Action *get_next_action() {
+    // If the current_action is the last one then the
+    // offset for the next one will be 0
+    if (current_action.next_offset == 0)
+      return NULL;
+
+    // To move to the next action we must use raw_action_ptr + 1
+    // because the offset is from the next_offset place itself and
+    // not from the start of the struct:
+    LSDA_ptr action_raw =
+        current_action.raw_action_ptr + 1 + current_action.next_offset;
+
+    current_action.type_index = action_raw[0];
+    current_action.next_offset = readSLEB128(&action_raw[1]);
+    current_action.raw_action_ptr = &action_raw[0];
+
+    return &current_action;
+  }
+
+  /**
+   * Returns the type from the types table defined for an action
+   */
+  const std::type_info *get_type_for(const Action *action) const {
+    // The index starts at the end of the types table
+    int idx = -1 * action->type_index;
+    const void *catch_type_info = this->types_table_start[idx];
+    return (const std::type_info *)catch_type_info;
   }
 };
 
 /**********************************************/
 
-// (1) The version and the exceptionClass are related to language/ABI/compiler
-// toolchain/native or non-native exception, etc.
-// We don't need to worry about it for our mini ABI, we'll just handle all the
-// exceptions.
-// (2) Actions: this is what _Unwind_ uses to tell the personality function what
-// it should do (more on that later)
-// (3) unwind_exception: the exception
-// allocated by __cxa_allocate_exception (kind of... there's a lot of pointer
-// arithmetic going on but that pointer can be used to access our original
-// exception anyway)
-// (4) context: this holds all the information regarding the
-// current stack frame, for example the language specific data area (LSDA). This
-// is what we will be using to detect whether this stack can handle the thrown
-// exception (and also to detect whether we need to run any destructors)
+bool can_handle(const std::type_info *thrown_exception,
+                const std::type_info *catch_type) {
+  // If the catch has no type specifier we're dealing with a catch(...)
+  // and we can handle this exception regardless of what it is
+  if (not catch_type)
+    return true;
+
+  // Naive type comparisson: only check if the type name is the same
+  // This won't work with any kind of inheritance
+  if (thrown_exception->name() == catch_type->name())
+    return true;
+
+  // If types don't match just don't handle the exception
+  return false;
+}
+
+_Unwind_Reason_Code run_landing_pad(_Unwind_Exception *unwind_exception,
+                                    _Unwind_Context *context,
+                                    int exception_type_idx,
+                                    uintptr_t lp_address) {
+  int r0 = __builtin_eh_return_data_regno(0);
+  int r1 = __builtin_eh_return_data_regno(1);
+
+  _Unwind_SetGR(context, r0, (uintptr_t)(unwind_exception));
+  _Unwind_SetGR(context, r1, (uintptr_t)(exception_type_idx));
+  _Unwind_SetIP(context, lp_address);
+
+  return _URC_INSTALL_CONTEXT;
+}
 
 _Unwind_Reason_Code __gxx_personality_v0(int version, _Unwind_Action actions,
                                          uint64_t exceptionClass,
                                          _Unwind_Exception *unwind_exception,
                                          _Unwind_Context *context) {
+  // Calculate what the instruction pointer was just before the
+  // exception was thrown for this stack frame
+  uintptr_t throw_ip = _Unwind_GetIP(context) - 1;
 
-    printf("Personality function, searching for handler\n");
+  // Get a ptr to the start of the function for this stack frame;
+  // this is needed because a lot of the addresses in the LSDA are
+  // actually offsets from func_start
+  uintptr_t func_start = _Unwind_GetRegionStart(context);
 
-    // Calculate what the instruction pointer was just before the
-    // exception was thrown for this stack frame
-    uintptr_t throw_ip = _Unwind_GetIP(context) - 1;
+  // Get a pointer to the type_info of the exception being thrown
+  __cxa_exception *exception_header =
+      (__cxa_exception *)(unwind_exception + 1) - 1;
+  std::type_info *thrown_exception_type = exception_header->exceptionType;
 
-    // Get a pointer to the raw memory address of the LSDA
-    LSDA_ptr raw_lsda = (LSDA_ptr) _Unwind_GetLanguageSpecificData(context);
+  // Get a pointer to the raw memory address of the LSDA
+  LSDA_ptr raw_lsda = (LSDA_ptr)_Unwind_GetLanguageSpecificData(context);
 
-    // Create an object to hide some part of the LSDA processing
-    LSDA lsda(raw_lsda);
+  // Create an object to hide some part of the LSDA processing
+  LSDA lsda(raw_lsda);
 
-    // Go through each call site in this stack frame to check whether
-    // the current exception can be handled here
-    for(const LSDA_CS *cs = lsda.next_call_site_entry(true);
-            cs != NULL;
-            cs = lsda.next_call_site_entry())
-    {
-        // If there's no landing pad we can't handle this exception
-        if (not cs->lp) continue;
+  // Go through each call site in this stack frame to check whether
+  // the current exception can be handled here
+  for (const Call_Site *cs = lsda.next_call_site_entry(true); cs != NULL;
+       cs = lsda.next_call_site_entry()) {
+    // If there's no landing pad we can't handle this exception
+    if (!cs->has_landing_pad())
+      continue;
 
-        uintptr_t func_start = _Unwind_GetRegionStart(context);
+    // Calculate the range of the instruction pointer valid for this
+    // landing pad; if this LP can handle the current exception then
+    // the IP for this stack frame must be in this range
+    if (!cs->valid_for_throw_ip(func_start, throw_ip))
+      continue;
 
-        // Calculate the range of the instruction pointer valid for this
-        // landing pad; if this LP can handle the current exception then
-        // the IP for this stack frame must be in this range
-        uintptr_t try_start = func_start + cs->start;
-        uintptr_t try_end = func_start + cs->start + cs->len;
-
-        // Check if this is the correct LP for the current try block
-        if (throw_ip < try_start) continue;
-        if (throw_ip > try_end) continue;
-
-        // Get the offset into the action table for this LP
-        if (cs->action > 0)
-        {
-            // cs->action is the offset + 1; that way cs->action == 0
-            // means there is no associated entry in the action table
-            const size_t action_offset = cs->action - 1;
-            const LSDA_ptr action = lsda.action_tbl_start + action_offset;
-
-            // For a landing pad with a catch the action table will
-            // hold an index to a list of types
-            int type_index = action[0];
-
-            // Get the type of the exception we can handle
-            const void* catch_type_info = lsda.types_table_start[ -1 * type_index ];
-            const std::type_info *catch_ti = (const std::type_info *) catch_type_info;
-
-            // Get the type of the original exception being thrown
-            __cxa_exception* exception_header = (__cxa_exception*)(unwind_exception+1) - 1;
-            std::type_info *org_ex_type = exception_header->exceptionType;
-
-            printf("%s thrown, catch handles %s\n",
-                        org_ex_type->name(),
-                        catch_ti->name());
-
-            // Check if the exception being thrown is of the same type
-            // than the exception we can handle
-            if (org_ex_type->name() != catch_ti->name())
-                continue;
+    // Iterate all the actions for this call site
+    for (const LSDA::Action *action = lsda.get_first_action_for_cs(cs);
+         action != NULL; action = lsda.get_next_action()) {
+      if (action->type_index == 0) {
+        // If there is an action entry but it doesn't point to any
+        // type, it means this is actually a cleanup block and we
+        // should run it anyway
+        //
+        // Of course the cleanup should only run on the cleanup phase
+        if (actions & _UA_CLEANUP_PHASE) {
+          return run_landing_pad(unwind_exception, context, action->type_index,
+                                 func_start + cs->lp);
         }
+      } else {
+        // Get the types this action can handle
+        const std::type_info *catch_type = lsda.get_type_for(action);
 
-        // We found a landing pad for this exception; resume execution
+        if (can_handle(catch_type, thrown_exception_type)) {
+          // If we are on search phase, tell _Unwind_ we can handle this one
+          if (actions & _UA_SEARCH_PHASE)
+            return _URC_HANDLER_FOUND;
 
-        // If we are on search phase, tell _Unwind_ we can handle this one
-        if (actions & _UA_SEARCH_PHASE) return _URC_HANDLER_FOUND;
-
-        // If we are not on search phase then we are on _UA_CLEANUP_PHASE
-        // and we need to install the context
-        int r0 = __builtin_eh_return_data_regno(0);
-        int r1 = __builtin_eh_return_data_regno(1);
-
-        _Unwind_SetGR(context, r0, (uintptr_t)(unwind_exception));
-        // Note the following code hardcodes the exception type;
-        // we'll fix that later on
-        _Unwind_SetGR(context, r1, (uintptr_t)(1));
-
-        _Unwind_SetIP(context, func_start + cs->lp);
-
-        return _URC_INSTALL_CONTEXT;
+          // If we are not on search phase then we are on _UA_CLEANUP_PHASE
+          // and we need to install the context
+          return run_landing_pad(unwind_exception, context, action->type_index,
+                                 func_start + cs->lp);
+        }
+      }
     }
+  }
 
-    return _URC_CONTINUE_UNWIND;
-
+  return _URC_CONTINUE_UNWIND;
 }
-
-} // extern "C"
+}

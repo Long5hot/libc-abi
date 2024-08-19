@@ -1,16 +1,16 @@
 all: app
 
 ThrowAndCatch.o: ThrowAndCatch.cpp ../include/throw.h
-		clang++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o ThrowAndCatch.o -I../include/ -O0 ThrowAndCatch.cpp
+		g++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o ThrowAndCatch.o -I../include/ -O0 ThrowAndCatch.cpp
 
 cppabi.o: ../../abi/libc++abi.cpp
-		clang++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o cppabi.o -O0 ../../abi/libc++abi.cpp
+		g++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o cppabi.o -O0 ../../abi/libc++abi.cpp
 
 main.o: main.c
-		clang -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o main.o -I../include/ -O0 main.c
+		gcc -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o main.o -I../include/ -O0 main.c
 
 app: main.o cppabi.o ThrowAndCatch.o
-		clang main.o cppabi.o ThrowAndCatch.o -O0 -o app
+		gcc main.o cppabi.o ThrowAndCatch.o -O0 -o app
 
 throw.gas: ThrowAndCatch.cpp
 		g++ -c ThrowAndCatch.cpp -masm=intel -fverbose-asm -I../include/ -Wa,-adhls > throw.gas
@@ -26,7 +26,7 @@ run: app
 	./app
 
 debug:
-	clang++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o ThrowAndCatch.o -I../include/ -O0 ThrowAndCatch.cpp -g
-	clang++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o cppabi.o -O0 ../../abi/libc++abi.cpp -g
-	clang -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o main.o -I../include/ -O0 main.c -g
-	clang main.o cppabi.o ThrowAndCatch.o -O0 -o app -g
+	g++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o ThrowAndCatch.o -I../include/ -O0 ThrowAndCatch.cpp -g
+	g++ -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o cppabi.o -O0 ../../abi/libc++abi.cpp -g
+	gcc -fverbose-asm -masm=intel -D_GLIBCXX_DEBUG -c -o main.o -I../include/ -O0 main.c -g
+	gcc main.o cppabi.o ThrowAndCatch.o -O0 -o app -g
